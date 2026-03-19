@@ -16,7 +16,7 @@ async function sbSelect(table, cols, filters, single = false) {
       apikey: SUPABASE_ANON_KEY,
       Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
     },
-  });
+  })
   const d = await r.json();
   if (!r.ok) return { data: null, error: d };
   return {
