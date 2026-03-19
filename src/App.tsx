@@ -267,17 +267,17 @@ const RADIUS_OPTIONS = [3, 5, 10, 15, 25],
       if (Array.isArray(data) && data.length > 0) return data[0];
     }
     // Fallback: geocode city/area names using OpenStreetMap (free, no key needed)
-    const geoRes = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
-      { headers: { 'Accept-Language': 'en' } }
+   const cityRes = await fetch(
+      `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(address)}&limit=1`,
+      { headers: { 'X-Api-Key': RENTCAST_KEY } }
     );
-    if (!geoRes.ok) throw new Error('Location lookup failed: ' + geoRes.status);
-    const geoData = await geoRes.json();
-    if (!geoData || geoData.length === 0)
-      throw new Error('Location not found. Try a more specific city or address.');
+    const cityData = await cityRes.json();
+    if (!cityRes.ok || !Array.isArray(cityData) || cityData.length === 0 || !cityData[0].latitude) {
+      throw new Error('Location not found. Try a zip code instead, e.g. 92011');
+    }
     return {
-      latitude: parseFloat(geoData[0].lat),
-      longitude: parseFloat(geoData[0].lon),
+      latitude: cityData[0].latitude,
+      longitude: cityData[0].longitude,
     };
   }
 async function fetchSubjectListingPrice(address) {
