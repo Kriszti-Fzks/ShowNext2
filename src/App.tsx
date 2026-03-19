@@ -257,19 +257,29 @@ function buildAddress(prop) {
 // ---------------------------------------------------------------------------
 const RADIUS_OPTIONS = [3, 5, 10, 15, 25],
   DEFAULT_RADIUS = 10;
-async function fetchSubjectProperty(address) {
-  const res = await fetch(
-    `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(
-      address
-    )}&limit=1`,
-    { headers: { 'X-Api-Key': RENTCAST_KEY } }
-  );
-  if (!res.ok) throw new Error('Property lookup failed: ' + res.status);
-  const data = await res.json();
-  if (!Array.isArray(data) || data.length === 0)
-    throw new Error('Property not found. Try a more specific address.');
-  return data[0];
-}
+  async function fetchSubjectProperty(address) {
+    const res = await fetch(
+      `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(address)}&limit=1`,
+      { headers: { 'X-Api-Key': RENTCAST_KEY } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) return data[0];
+    }
+    // Fallback: geocode city/area names using OpenStreetMap (free, no key needed)
+    const geoRes = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (!geoRes.ok) throw new Error('Location lookup failed: ' + geoRes.status);
+    const geoData = await geoRes.json();
+    if (!geoData || geoData.length === 0)
+      throw new Error('Location not found. Try a more specific city or address.');
+    return {
+      latitude: parseFloat(geoData[0].lat),
+      longitude: parseFloat(geoData[0].lon),
+    };
+  }
 async function fetchSubjectListingPrice(address) {
   try {
     const res = await fetch(
@@ -307,15 +317,15 @@ async function fetchActiveListings(lat, lng, radius) {
     fetch(base + '&propertyType=Condo', {
       headers: { 'X-Api-Key': RENTCAST_KEY },
     }),
-    fetch(base + '&propertyType=Townhouse', {
+    fetch(base + '&propertyType=Townhouse'), fetch(base + '&propertyType=Single%20Family', {
       headers: { 'X-Api-Key': RENTCAST_KEY },
     }),
   ]);
-  const [cD, tD] = await Promise.all([
+  const [cD, tD, sfD] = await Promise.all([
     cR.ok ? cR.json() : [],
     tR.ok ? tR.json() : [],
   ]);
-  const all = [...(cD || []), ...(tD || [])];
+  const all = [...(cD || []), ...(tD || []), ...(sfD || [])];
   const seen = new Set();
   return all.filter((p) => {
     const k = p.id || p.addressLine1 + p.zipCode;
@@ -325,7 +335,9 @@ async function fetchActiveListings(lat, lng, radius) {
   });
 }
 
-function findSimilarHomes(subject, listings, radius) {
+function findSimilarHomes(subject, listings, radius, centerLat?, centerLng?) {
+  centerLat = centerLat ?? subject.latitude;
+  centerLng = centerLng ?? subject.longitude;
   const results = [];
   for (const comp of listings) {
     if (!comp.latitude || !comp.longitude) continue;
@@ -337,8 +349,9 @@ function findSimilarHomes(subject, listings, radius) {
       comp.longitude
     );
     if (distToSubject < 0.02) continue; // within ~100 feet = same property
-    if (!typeCompatible(subject.propertyType, comp.propertyType)) continue;
-    if (distToSubject > radius) continue;
+    // typeCompatible check removed to allow broader matching
+    const distToCenter = haversine(centerLat, centerLng, comp.latitude, comp.longitude);
+if (distToCenter > radius) continue;
     const score = scoreComp(subject, comp, distToSubject, radius);
     if (score === null) continue;
     results.push({ ...comp, _dist: distToSubject, _score: score });
@@ -1446,7 +1459,7 @@ export default function App() {
         setSubject(subjectProp);
       }
 
-      const ranked = findSimilarHomes(subjectProp, listings, radius);
+      const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
 
       await sbInsert('search_logs', {
