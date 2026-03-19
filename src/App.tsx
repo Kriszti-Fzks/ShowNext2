@@ -268,30 +268,16 @@ const RADIUS_OPTIONS = [3, 5, 10, 15, 25],
     }
     // Fallback: geocode city/area names using OpenStreetMap (free, no key needed)
    // Try city search — first attempt plain, then append CA if needed
-    const cityQuery = address.toLowerCase().includes(', ca') || address.toLowerCase().includes(',ca')
-      ? address
-      : address + ', CA';
+    const cleanCity = address.trim().replace(/,?\s*CA$/i, '').trim();
     const cityRes = await fetch(
-      `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cityQuery)}&state=CA&limit=1`,
+      `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cleanCity)}&state=CA&limit=1`,
       { headers: { 'X-Api-Key': RENTCAST_KEY } }
     );
     const cityData = await cityRes.json();
-    if (!cityRes.ok || !Array.isArray(cityData) || cityData.length === 0 || !cityData[0].latitude) {
-      // Last resort: try zip code
-      const zipRes = await fetch(
-        `https://api.rentcast.io/v1/listings/sale?zipCode=${encodeURIComponent(address.trim())}&limit=1`,
-        { headers: { 'X-Api-Key': RENTCAST_KEY } }
-      );
-      const zipData = await zipRes.json();
-      if (!zipRes.ok || !Array.isArray(zipData) || zipData.length === 0 || !zipData[0].latitude) {
-        throw new Error('Location not found. Try a zip code like 92011 or "Carlsbad, CA"');
-      }
-      return { latitude: zipData[0].latitude, longitude: zipData[0].longitude };
+    if (cityRes.ok && Array.isArray(cityData) && cityData.length > 0 && cityData[0].latitude) {
+      return { latitude: cityData[0].latitude, longitude: cityData[0].longitude };
     }
-    return {
-      latitude: cityData[0].latitude,
-      longitude: cityData[0].longitude,
-    };
+    throw new Error('Location not found. Try typing just the city name, e.g. "Carlsbad"');
   }
 async function fetchSubjectListingPrice(address) {
   try {
