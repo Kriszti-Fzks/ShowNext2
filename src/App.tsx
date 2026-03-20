@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const RENTCAST_KEY = 'cb15a8f37df94aab92c5107fd0a5f395';
-const SUBJECT_PRICE_OVERRIDE = 0; // Manual override from Zillow
+
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1dWh2b3N0Ym55YmlvZWd3bXZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2NzM0MjgsImV4cCI6MjA4OTI0OTQyOH0.KG0HBqHza2eVaLWgw2uIoAEeTLlqDbyIM7Sm-OM4htk';
@@ -293,32 +293,9 @@ async function fetchSubjectProperty(address) {
   throw new Error('Location not found. Try typing just the city name, e.g. "Carlsbad"');
 }
 
-async function fetchSubjectListingPrice(address) {
-  try {
-    const res = await fetch(
-      `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(address)}&limit=1`,
-      { headers: RENTCAST_HEADERS }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 0 && data[0].price)
-      return { price: data[0].price, label: 'List Price' };
-  } catch (_) {}
-  return null;
-}
 
-async function fetchAVMPrice(address) {
-  try {
-    const res = await fetch(
-      `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(address)}`,
-      { headers: RENTCAST_HEADERS }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data && data.price) return { price: data.price, label: 'Est. Value' };
-  } catch (_) {}
-  return null;
-}
+
+
 
 async function fetchActiveListings(lat, lng, radius) {
   const base = `https://api.rentcast.io/v1/listings/sale?latitude=${lat}&longitude=${lng}&radius=${radius}&status=Active&limit=500`;
@@ -350,31 +327,38 @@ async function fetchActiveListings(lat, lng, radius) {
 function findSimilarHomes(subject, listings, radius, centerLat, centerLng) {
   centerLat = centerLat ?? subject.latitude;
   centerLng = centerLng ?? subject.longitude;
-  const results = [];
+  const usingAltLocation = centerLat !== subject.latitude || centerLng !== subject.longitude;
+  const subjectCity = (subject.city || '').toLowerCase();
+
+  const sameCityResults = [];
+  const otherResults = [];
 
   for (const comp of listings) {
     if (!comp.latitude || !comp.longitude) continue;
-
-    const distToSubject = haversine(
-      subject.latitude,
-      subject.longitude,
-      comp.latitude,
-      comp.longitude
-    );
-    if (distToSubject < 0.02) continue; // within ~100 feet = same property
-
+    const distToSubject = haversine(subject.latitude, subject.longitude, comp.latitude, comp.longitude);
+    if (distToSubject < 0.02) continue;
+    if (!typeCompatible(subject.propertyType, comp.propertyType)) continue;
     const distToCenter = haversine(centerLat, centerLng, comp.latitude, comp.longitude);
-    if (distToCenter > radius) continue;
-
+    if (!usingAltLocation && distToCenter > radius) continue;
     const score = scoreComp(subject, comp, distToSubject, radius);
     if (score === null) continue;
-    results.push({ ...comp, _dist: distToSubject, _score: score });
+    const compCity = (comp.city || '').toLowerCase();
+    if (compCity === subjectCity) {
+      sameCityResults.push({ ...comp, _dist: distToSubject, _score: score });
+    } else {
+      otherResults.push({ ...comp, _dist: distToSubject, _score: score });
+    }
   }
 
-  results.sort((a, b) => b._score - a._score);
-  return results.slice(0, 10);
-}
+  sameCityResults.sort((a, b) => b._score - a._score);
+  otherResults.sort((a, b) => b._score - a._score);
 
+  const combined = sameCityResults.length >= 5
+    ? sameCityResults.slice(0, 10)
+    : [...sameCityResults, ...otherResults].slice(0, 10);
+
+  return combined;
+}
 // ---------------------------------------------------------------------------
 // SUBJECT PROPERTY CARD
 // ---------------------------------------------------------------------------
@@ -1261,39 +1245,11 @@ export default function App() {
       let subjectProp = await fetchSubjectProperty(searchAddress);
       apiCallsUsed++;
 
-      setLoadingMsg('Fetching property value…');
-      let displayPrice, displayPriceLabel;
+    
 
-      const listingPrice = await fetchSubjectListingPrice(searchAddress);
-      apiCallsUsed++;
-      if (listingPrice) {
-        displayPrice = listingPrice.price;
-        displayPriceLabel = listingPrice.label;
-      } else {
-        const avm = await fetchAVMPrice(searchAddress);
-        apiCallsUsed++;
-        if (avm) {
-          displayPrice = avm.price;
-          displayPriceLabel = avm.label;
-        } else if (subjectProp.lastSalePrice) {
-          displayPrice = subjectProp.lastSalePrice;
-          displayPriceLabel = 'Last Sale';
-        } else {
-          displayPrice = subjectProp.price || null;
-          displayPriceLabel = 'Est. Value';
-        }
-      }
 
-      if (SUBJECT_PRICE_OVERRIDE) {
-        displayPrice = SUBJECT_PRICE_OVERRIDE;
-        displayPriceLabel = 'List Price';
-      }
 
-      subjectProp = {
-        ...subjectProp,
-        _displayPrice: displayPrice,
-        _displayPriceLabel: displayPriceLabel,
-      };
+      
 
       let searchLat = subjectProp.latitude;
       let searchLng = subjectProp.longitude;
@@ -1311,10 +1267,11 @@ export default function App() {
       apiCallsUsed += 3; // now correctly counting all 3 property type fetches
 
       // Try to find subject in the listings pool by coordinates
-      let subjectFoundInListings = listings.find((p) => {
-        if (!p.latitude || !p.longitude) return false;
-        return haversine(subjectProp.latitude, subjectProp.longitude, p.latitude, p.longitude) < 0.02;
-      });
+      let subjectFoundInListings = listings.find((p) =>
+  (p.addressLine1 || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 
+  (subjectProp.addressLine1 || '').toLowerCase().replace(/[^a-z0-9]/g, '') &&
+  p.zipCode === subjectProp.zipCode
+);
 
       if (!subjectFoundInListings) {
         // Fallback: direct address lookup without propertyType filter
@@ -1334,7 +1291,20 @@ export default function App() {
           apiCallsUsed++;
         } catch (_) {}
       }
-
+      if (subjectFoundInListings) {
+        subjectProp = {
+          ...subjectProp,
+          _displayPrice: subjectFoundInListings.price || subjectFoundInListings.listPrice,
+          _displayPriceLabel: 'List Price',
+        };
+      } else {
+        subjectProp = {
+          ...subjectProp,
+          _displayPrice: subjectProp.lastSalePrice || null,
+          _displayPriceLabel: subjectProp.lastSalePrice ? 'Last Sale · Listing may not be active' : 'Price unavailable · Listing may not be active',
+        };
+      }
+      setSubject(subjectProp);
       const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
 
