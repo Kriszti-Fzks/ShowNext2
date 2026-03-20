@@ -1443,20 +1443,7 @@ export default function App() {
           apiCallsUsed++;
         } catch (_) {}
       }
-      if (
-        subjectFoundInListings &&
-        (subjectFoundInListings.price || subjectFoundInListings.listPrice)
-      ) {
-        subjectProp = {
-          ...subjectProp,
-          _displayPrice:
-            SUBJECT_PRICE_OVERRIDE ||
-            subjectFoundInListings.price ||
-            subjectFoundInListings.listPrice,
-          _displayPriceLabel: 'List Price',
-        };
-        setSubject(subjectProp);
-      }
+
 
       const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
