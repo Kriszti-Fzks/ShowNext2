@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const RENTCAST_KEY = '3e3426c07ce44160b258e3862f8fcdd7';
-const SUBJECT_PRICE_OVERRIDE = 1299888; // Manual override from Zillow
+const SUBJECT_PRICE_OVERRIDE = 0; // Manual override from Zillow
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1dWh2b3N0Ym55YmlvZWd3bXZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2NzM0MjgsImV4cCI6MjA4OTI0OTQyOH0.KG0HBqHza2eVaLWgw2uIoAEeTLlqDbyIM7Sm-OM4htk';
