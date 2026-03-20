@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const RENTCAST_KEY = '3e3426c07ce44160b258e3862f8fcdd7';
-const SUBJECT_PRICE_OVERRIDE = 0; // Manual override from Zillow
+const SUBJECT_PRICE_OVERRIDE = 1299888; // Manual override from Zillow
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1dWh2b3N0Ym55YmlvZWd3bXZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2NzM0MjgsImV4cCI6MjA4OTI0OTQyOH0.KG0HBqHza2eVaLWgw2uIoAEeTLlqDbyIM7Sm-OM4htk';
@@ -16,7 +16,7 @@ async function sbSelect(table, cols, filters, single = false) {
       apikey: SUPABASE_ANON_KEY,
       Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
     },
-  })
+  });
   const d = await r.json();
   if (!r.ok) return { data: null, error: d };
   return {
@@ -267,17 +267,18 @@ const RADIUS_OPTIONS = [3, 5, 10, 15, 25],
       if (Array.isArray(data) && data.length > 0) return data[0];
     }
     // Fallback: geocode city/area names using OpenStreetMap (free, no key needed)
-   // Try city search — first attempt plain, then append CA if needed
-    const cleanCity = address.trim().replace(/,?\s*CA$/i, '').trim();
-    const cityRes = await fetch(
-      `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cleanCity)}&state=CA&limit=1`,
-      { headers: { 'X-Api-Key': RENTCAST_KEY } }
+    const geoRes = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+      { headers: { 'Accept-Language': 'en' } }
     );
-    const cityData = await cityRes.json();
-    if (cityRes.ok && Array.isArray(cityData) && cityData.length > 0 && cityData[0].latitude) {
-      return { latitude: cityData[0].latitude, longitude: cityData[0].longitude };
-    }
-    throw new Error('Location not found. Try typing just the city name, e.g. "Carlsbad"');
+    if (!geoRes.ok) throw new Error('Location lookup failed: ' + geoRes.status);
+    const geoData = await geoRes.json();
+    if (!geoData || geoData.length === 0)
+      throw new Error('Location not found. Try a more specific city or address.');
+    return {
+      latitude: parseFloat(geoData[0].lat),
+      longitude: parseFloat(geoData[0].lon),
+    };
   }
 async function fetchSubjectListingPrice(address) {
   try {
@@ -324,7 +325,7 @@ async function fetchActiveListings(lat, lng, radius) {
     cR.ok ? cR.json() : [],
     tR.ok ? tR.json() : [],
   ]);
-  const all = [...(cD || []), ...(tD || []), ...(sfD || [])];
+  const all = [...(cD || []), ...(tD || [])];
   const seen = new Set();
   return all.filter((p) => {
     const k = p.id || p.addressLine1 + p.zipCode;
@@ -332,7 +333,7 @@ async function fetchActiveListings(lat, lng, radius) {
     seen.add(k);
     return true;
   });
-}
+
 
 function findSimilarHomes(subject, listings, radius, centerLat?, centerLng?) {
   centerLat = centerLat ?? subject.latitude;
@@ -348,7 +349,7 @@ function findSimilarHomes(subject, listings, radius, centerLat?, centerLng?) {
       comp.longitude
     );
     if (distToSubject < 0.02) continue; // within ~100 feet = same property
-    // typeCompatible check removed to allow broader matching
+    if (!typeCompatible(subject.propertyType, comp.propertyType)) continue;
     const distToCenter = haversine(centerLat, centerLng, comp.latitude, comp.longitude);
 if (distToCenter > radius) continue;
     const score = scoreComp(subject, comp, distToSubject, radius);
@@ -1443,7 +1444,20 @@ export default function App() {
           apiCallsUsed++;
         } catch (_) {}
       }
-
+      if (
+        subjectFoundInListings &&
+        (subjectFoundInListings.price || subjectFoundInListings.listPrice)
+      ) {
+        subjectProp = {
+          ...subjectProp,
+          _displayPrice:
+            SUBJECT_PRICE_OVERRIDE ||
+            subjectFoundInListings.price ||
+            subjectFoundInListings.listPrice,
+          _displayPriceLabel: 'List Price',
+        };
+        setSubject(subjectProp);
+      }
 
       const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
