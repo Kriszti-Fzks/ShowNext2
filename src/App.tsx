@@ -1381,12 +1381,7 @@ export default function App() {
           displayPriceLabel = 'Est. Value';
         }
       }
-      // Apply manual price override if set
-      if (SUBJECT_PRICE_OVERRIDE) {
-        displayPrice = SUBJECT_PRICE_OVERRIDE;
-        displayPriceLabel = 'List Price';
-      }
-
+      
       subjectProp = {
         ...subjectProp,
         _displayPrice: displayPrice,
