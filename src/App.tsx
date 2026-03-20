@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const RENTCAST_KEY = '3e3426c07ce44160b258e3862f8fcdd7';
-
+const SUBJECT_PRICE_OVERRIDE = 0; // Manual override from Zillow
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1dWh2b3N0Ym55YmlvZWd3bXZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2NzM0MjgsImV4cCI6MjA4OTI0OTQyOH0.KG0HBqHza2eVaLWgw2uIoAEeTLlqDbyIM7Sm-OM4htk';
-// Helper wrappers that match Supabase client API
+
+// ---------------------------------------------------------------------------
+// SUPABASE HELPERS
+// ---------------------------------------------------------------------------
 async function sbSelect(table, cols, filters, single = false) {
   const params = new URLSearchParams({ select: cols });
   if (filters)
@@ -24,6 +27,7 @@ async function sbSelect(table, cols, filters, single = false) {
     error: null,
   };
 }
+
 async function sbInsert(table, row) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
@@ -41,6 +45,7 @@ async function sbInsert(table, row) {
     error: r.ok ? null : d,
   };
 }
+
 async function sbUpdate(table, row, col, val) {
   const r = await fetch(
     `${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${encodeURIComponent(val)}`,
@@ -56,15 +61,8 @@ async function sbUpdate(table, row, col, val) {
   );
   return { error: r.ok ? null : await r.json() };
 }
-async function sbSelectOrdered(
-  table,
-  cols,
-  filterCol,
-  filterVal,
-  orderCol,
-  ascending,
-  limit
-) {
+
+async function sbSelectOrdered(table, cols, filterCol, filterVal, orderCol, ascending, limit) {
   const dir = ascending ? 'asc' : 'desc';
   const r = await fetch(
     `${SUPABASE_URL}/rest/v1/${table}?select=${cols}&${filterCol}=eq.${encodeURIComponent(
@@ -88,10 +86,12 @@ function fmt$(v) {
   if (!v && v !== 0) return 'N/A';
   return '$' + Number(v).toLocaleString();
 }
+
 function fmtNum(v) {
   if (!v && v !== 0) return 'N/A';
   return Number(v).toLocaleString();
 }
+
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 3958.8;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -103,9 +103,7 @@ function haversine(lat1, lon1, lat2, lon2) {
       Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-function normAddr(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
+
 function zillowUrl(comp) {
   const parts = [
     comp.addressLine1 || '',
@@ -119,15 +117,17 @@ function zillowUrl(comp) {
     .replace(/-+/g, '-');
   return `https://www.zillow.com/homes/${encodeURIComponent(slug)}_rb/`;
 }
+
 function typeCompatible(a, b) {
   const t = ['condo', 'condominium', 'townhouse', 'townhome'];
-  const aL = (a || '').toLowerCase(),
-    bL = (b || '').toLowerCase();
+  const aL = (a || '').toLowerCase();
+  const bL = (b || '').toLowerCase();
   return (
     (t.some((x) => aL.includes(x)) && t.some((x) => bL.includes(x))) ||
     aL === bL
   );
 }
+
 async function hashPassword(pw) {
   const buf = await crypto.subtle.digest(
     'SHA-256',
@@ -136,6 +136,12 @@ async function hashPassword(pw) {
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+function buildAddress(prop) {
+  return [prop.addressLine1, prop.city, prop.state, prop.zipCode]
+    .filter(Boolean)
+    .join(', ');
 }
 
 // ---------------------------------------------------------------------------
@@ -147,10 +153,12 @@ function scoreComp(subject, comp, distMiles, maxRadius) {
   if (bedDiff > 2) return null;
   if (bedDiff === 1) d += 15;
   else if (bedDiff === 2) d += 28;
-  const sp = subject._displayPrice,
-    cp = comp.price || comp.listPrice;
+
+  const sp = subject._displayPrice;
+  const cp = comp.price || comp.listPrice;
   if (sp && cp) d += Math.min(30, (Math.abs(cp - sp) / sp) * 60);
   else d += 15;
+
   if (subject.squareFootage && comp.squareFootage)
     d += Math.min(
       20,
@@ -159,9 +167,11 @@ function scoreComp(subject, comp, distMiles, maxRadius) {
         40
     );
   else d += 10;
+
   d += Math.min(distMiles / maxRadius, 1) * 10;
   return Math.max(0, Math.round(100 - d));
 }
+
 function scoreLabel(score) {
   if (score >= 85) return { label: 'Very Strong', color: '#22c55e' };
   if (score >= 70) return { label: 'Strong', color: '#84cc16' };
@@ -169,13 +179,14 @@ function scoreLabel(score) {
   if (score >= 40) return { label: 'Fair', color: '#f97316' };
   return { label: 'Loose', color: '#ef4444' };
 }
+
 function keyDiffs(subject, comp) {
   const diffs = [];
-  const sp = subject._displayPrice,
-    cp = comp.price || comp.listPrice;
+  const sp = subject._displayPrice;
+  const cp = comp.price || comp.listPrice;
   if (sp && cp) {
-    const diff = cp - sp,
-      pct = ((diff / sp) * 100).toFixed(0);
+    const diff = cp - sp;
+    const pct = ((diff / sp) * 100).toFixed(0);
     diffs.push(
       Math.abs(Number(pct)) < 3
         ? 'Similar price'
@@ -183,8 +194,8 @@ function keyDiffs(subject, comp) {
     );
   }
   if (subject.squareFootage && comp.squareFootage) {
-    const diff = comp.squareFootage - subject.squareFootage,
-      pct = ((Math.abs(diff) / subject.squareFootage) * 100).toFixed(0);
+    const diff = comp.squareFootage - subject.squareFootage;
+    const pct = ((Math.abs(diff) / subject.squareFootage) * 100).toFixed(0);
     diffs.push(
       Math.abs(Number(pct)) < 4
         ? 'Similar size'
@@ -195,16 +206,18 @@ function keyDiffs(subject, comp) {
   }
   return diffs.slice(0, 2);
 }
+
 function talkingPoints(subject, comp) {
-  const pts = [],
-    bedDiff = Math.abs((comp.bedrooms || 0) - (subject.bedrooms || 0));
+  const pts = [];
+  const bedDiff = Math.abs((comp.bedrooms || 0) - (subject.bedrooms || 0));
   if (bedDiff === 0) pts.push(`Same bedroom count (${comp.bedrooms} bed)`);
   else pts.push(`${comp.bedrooms} bed vs ${subject.bedrooms} bed`);
-  const sp = subject._displayPrice,
-    cp = comp.price || comp.listPrice;
+
+  const sp = subject._displayPrice;
+  const cp = comp.price || comp.listPrice;
   if (sp && cp) {
-    const diff = cp - sp,
-      pct = ((diff / sp) * 100).toFixed(1);
+    const diff = cp - sp;
+    const pct = ((diff / sp) * 100).toFixed(1);
     pts.push(
       Math.abs(diff) < 10000
         ? 'Nearly identical price'
@@ -212,8 +225,8 @@ function talkingPoints(subject, comp) {
     );
   }
   if (subject.squareFootage && comp.squareFootage) {
-    const diff = comp.squareFootage - subject.squareFootage,
-      pct = ((Math.abs(diff) / subject.squareFootage) * 100).toFixed(0);
+    const diff = comp.squareFootage - subject.squareFootage;
+    const pct = ((Math.abs(diff) / subject.squareFootage) * 100).toFixed(0);
     pts.push(
       Math.abs(Number(pct)) < 5
         ? 'Very similar sqft'
@@ -222,17 +235,19 @@ function talkingPoints(subject, comp) {
   }
   return pts;
 }
+
 function shortAnalysis(subject, comp, score) {
-  const { label } = scoreLabel(score),
-    bedMatch = (comp.bedrooms || 0) === (subject.bedrooms || 0);
-  const sp = subject._displayPrice,
-    cp = comp.price || comp.listPrice;
-  const pDiff = sp && cp ? Math.abs(cp - sp) / sp : null,
-    sDiff =
-      subject.squareFootage && comp.squareFootage
-        ? Math.abs(comp.squareFootage - subject.squareFootage) /
-          subject.squareFootage
-        : null;
+  const { label } = scoreLabel(score);
+  const bedMatch = (comp.bedrooms || 0) === (subject.bedrooms || 0);
+  const sp = subject._displayPrice;
+  const cp = comp.price || comp.listPrice;
+  const pDiff = sp && cp ? Math.abs(cp - sp) / sp : null;
+  const sDiff =
+    subject.squareFootage && comp.squareFootage
+      ? Math.abs(comp.squareFootage - subject.squareFootage) /
+        subject.squareFootage
+      : null;
+
   let t = `${label} comparable. `;
   t += bedMatch ? 'Matches on bedroom count. ' : 'Different bedroom count. ';
   if (pDiff !== null)
@@ -246,47 +261,43 @@ function shortAnalysis(subject, comp, score) {
     t += sDiff < 0.1 ? 'Size well-matched.' : 'Note size difference.';
   return t;
 }
-function buildAddress(prop) {
-  return [prop.addressLine1, prop.city, prop.state, prop.zipCode]
-    .filter(Boolean)
-    .join(', ');
-}
 
 // ---------------------------------------------------------------------------
 // API CALLS
 // ---------------------------------------------------------------------------
-const RADIUS_OPTIONS = [3, 5, 10, 15, 25],
-  DEFAULT_RADIUS = 10;
-  async function fetchSubjectProperty(address) {
-    const res = await fetch(
-      `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(address)}&limit=1`,
-      { headers: { 'X-Api-Key': RENTCAST_KEY } }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data[0];
-    }
-    // Fallback: geocode city/area names using OpenStreetMap (free, no key needed)
-    const geoRes = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
-      { headers: { 'Accept-Language': 'en' } }
-    );
-    if (!geoRes.ok) throw new Error('Location lookup failed: ' + geoRes.status);
-    const geoData = await geoRes.json();
-    if (!geoData || geoData.length === 0)
-      throw new Error('Location not found. Try a more specific city or address.');
-    return {
-      latitude: parseFloat(geoData[0].lat),
-      longitude: parseFloat(geoData[0].lon),
-    };
+const RADIUS_OPTIONS = [3, 5, 10, 15, 25];
+const DEFAULT_RADIUS = 10;
+const RENTCAST_HEADERS = { 'X-Api-Key': RENTCAST_KEY };
+
+async function fetchSubjectProperty(address) {
+  const res = await fetch(
+    `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(address)}&limit=1`,
+    { headers: RENTCAST_HEADERS }
+  );
+  if (res.ok) {
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) return data[0];
   }
+
+  // Fallback: search by city name
+  const cleanCity = address.trim().replace(/,?\s*CA$/i, '').trim();
+  const cityRes = await fetch(
+    `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cleanCity)}&state=CA&limit=1`,
+    { headers: RENTCAST_HEADERS }
+  );
+  const cityData = await cityRes.json();
+  if (cityRes.ok && Array.isArray(cityData) && cityData.length > 0 && cityData[0].latitude) {
+    return { latitude: cityData[0].latitude, longitude: cityData[0].longitude };
+  }
+
+  throw new Error('Location not found. Try typing just the city name, e.g. "Carlsbad"');
+}
+
 async function fetchSubjectListingPrice(address) {
   try {
     const res = await fetch(
-      `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(
-        address
-      )}&limit=1`,
-      { headers: { 'X-Api-Key': RENTCAST_KEY } }
+      `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(address)}&limit=1`,
+      { headers: RENTCAST_HEADERS }
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -295,13 +306,12 @@ async function fetchSubjectListingPrice(address) {
   } catch (_) {}
   return null;
 }
+
 async function fetchAVMPrice(address) {
   try {
     const res = await fetch(
-      `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(
-        address
-      )}`,
-      { headers: { 'X-Api-Key': RENTCAST_KEY } }
+      `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(address)}`,
+      { headers: RENTCAST_HEADERS }
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -312,20 +322,22 @@ async function fetchAVMPrice(address) {
 
 async function fetchActiveListings(lat, lng, radius) {
   const base = `https://api.rentcast.io/v1/listings/sale?latitude=${lat}&longitude=${lng}&radius=${radius}&status=Active&limit=500`;
-  // Fetch Condo + Townhouse listings in parallel
-  const [cR, tR] = await Promise.all([
-    fetch(base + '&propertyType=Condo', {
-      headers: { 'X-Api-Key': RENTCAST_KEY },
-    }),
-    fetch(base + '&propertyType=Townhouse'), fetch(base + '&propertyType=Single%20Family', {
-      headers: { 'X-Api-Key': RENTCAST_KEY },
-    }),
+
+  // FIX: was 3 fetches destructured into 2 variables; Townhouse was also missing headers
+  const [cR, tR, sfR] = await Promise.all([
+    fetch(base + '&propertyType=Condo', { headers: RENTCAST_HEADERS }),
+    fetch(base + '&propertyType=Townhouse', { headers: RENTCAST_HEADERS }),
+    fetch(base + '&propertyType=Single%20Family', { headers: RENTCAST_HEADERS }),
   ]);
+
+  // FIX: was only awaiting 2 items but destructuring 3, so sfD was always undefined
   const [cD, tD, sfD] = await Promise.all([
     cR.ok ? cR.json() : [],
     tR.ok ? tR.json() : [],
+    sfR.ok ? sfR.json() : [],
   ]);
-  const all = [...(cD || []), ...(tD || [])];
+
+  const all = [...(cD || []), ...(tD || []), ...(sfD || [])];
   const seen = new Set();
   return all.filter((p) => {
     const k = p.id || p.addressLine1 + p.zipCode;
@@ -333,15 +345,16 @@ async function fetchActiveListings(lat, lng, radius) {
     seen.add(k);
     return true;
   });
+}
 
-
-function findSimilarHomes(subject, listings, radius, centerLat?, centerLng?) {
+function findSimilarHomes(subject, listings, radius, centerLat, centerLng) {
   centerLat = centerLat ?? subject.latitude;
   centerLng = centerLng ?? subject.longitude;
   const results = [];
+
   for (const comp of listings) {
     if (!comp.latitude || !comp.longitude) continue;
-    // Skip if this listing IS the subject (coordinate check)
+
     const distToSubject = haversine(
       subject.latitude,
       subject.longitude,
@@ -349,25 +362,28 @@ function findSimilarHomes(subject, listings, radius, centerLat?, centerLng?) {
       comp.longitude
     );
     if (distToSubject < 0.02) continue; // within ~100 feet = same property
-    if (!typeCompatible(subject.propertyType, comp.propertyType)) continue;
+
     const distToCenter = haversine(centerLat, centerLng, comp.latitude, comp.longitude);
-if (distToCenter > radius) continue;
+    if (distToCenter > radius) continue;
+
     const score = scoreComp(subject, comp, distToSubject, radius);
     if (score === null) continue;
     results.push({ ...comp, _dist: distToSubject, _score: score });
   }
+
   results.sort((a, b) => b._score - a._score);
   return results.slice(0, 10);
 }
 
 // ---------------------------------------------------------------------------
-// SUBJECT PROPERTY CARD (highlighted, not selectable)
+// SUBJECT PROPERTY CARD
 // ---------------------------------------------------------------------------
 function SubjectCard({ subject }) {
   const [expanded, setExpanded] = useState(false);
-  const addr = buildAddress(subject),
-    url = zillowUrl(subject);
+  const addr = buildAddress(subject);
+  const url = zillowUrl(subject);
   const price = subject._displayPrice;
+
   return (
     <div
       style={{
@@ -391,14 +407,7 @@ function SubjectCard({ subject }) {
             flexWrap: 'wrap',
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              minWidth: 0,
-            }}
-          >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <span
               style={{
                 background: '#16a34a',
@@ -429,14 +438,7 @@ function SubjectCard({ subject }) {
               {addr}
             </a>
           </div>
-          <span
-            style={{
-              color: '#64748b',
-              fontSize: 16,
-              userSelect: 'none',
-              flexShrink: 0,
-            }}
-          >
+          <span style={{ color: '#64748b', fontSize: 16, userSelect: 'none', flexShrink: 0 }}>
             {expanded ? '▲' : '▼'}
           </span>
         </div>
@@ -452,27 +454,16 @@ function SubjectCard({ subject }) {
           {price != null ? (
             <span style={{ color: '#4ade80', fontWeight: 800, fontSize: 17 }}>
               {fmt$(price)}
-              <span
-                style={{
-                  color: '#86efac',
-                  fontSize: 11,
-                  marginLeft: 6,
-                  fontWeight: 400,
-                }}
-              >
+              <span style={{ color: '#86efac', fontSize: 11, marginLeft: 6, fontWeight: 400 }}>
                 ({subject._displayPriceLabel})
               </span>
             </span>
           ) : (
-            <span style={{ color: '#64748b', fontSize: 14 }}>
-              Price unavailable
-            </span>
+            <span style={{ color: '#64748b', fontSize: 14 }}>Price unavailable</span>
           )}
           <span style={{ color: '#86efac', fontSize: 14 }}>
             {subject.bedrooms ?? '?'} bd · {subject.bathrooms ?? '?'} ba
-            {subject.squareFootage
-              ? ` · ${fmtNum(subject.squareFootage)} sqft`
-              : ''}
+            {subject.squareFootage ? ` · ${fmtNum(subject.squareFootage)} sqft` : ''}
           </span>
         </div>
       </div>
@@ -528,20 +519,19 @@ function SubjectCard({ subject }) {
 function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false);
   const { label, color } = scoreLabel(comp._score);
-  const addr = buildAddress(comp),
-    url = zillowUrl(comp);
-  const diffs = keyDiffs(subject, comp),
-    points = talkingPoints(subject, comp),
-    analysis = shortAnalysis(subject, comp, comp._score);
+  const addr = buildAddress(comp);
+  const url = zillowUrl(comp);
+  const diffs = keyDiffs(subject, comp);
+  const points = talkingPoints(subject, comp);
+  const analysis = shortAnalysis(subject, comp, comp._score);
   const compPrice = comp.price || comp.listPrice;
+
   return (
     <div
       style={{
         marginBottom: 12,
         background: isSelected ? '#1e1b4b' : '#1a1a2e',
-        border: `2px solid ${
-          isSelected ? '#6d28d9' : expanded ? '#4c4c72' : '#252538'
-        }`,
+        border: `2px solid ${isSelected ? '#6d28d9' : expanded ? '#4c4c72' : '#252538'}`,
         borderRadius: 14,
         overflow: 'hidden',
       }}
@@ -559,14 +549,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
             flexWrap: 'wrap',
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              minWidth: 0,
-            }}
-          >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <input
               type="checkbox"
               checked={isSelected}
@@ -596,14 +579,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
               {addr}
             </a>
           </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: 6,
-              alignItems: 'center',
-              flexShrink: 0,
-            }}
-          >
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
             <span
               style={{
                 background: color + '22',
@@ -630,10 +606,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
             >
               {comp._dist.toFixed(1)} mi
             </span>
-
-            <span
-              style={{ color: '#64748b', fontSize: 16, userSelect: 'none' }}
-            >
+            <span style={{ color: '#64748b', fontSize: 16, userSelect: 'none' }}>
               {expanded ? '▲' : '▼'}
             </span>
           </div>
@@ -656,9 +629,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
           </span>
         </div>
         {diffs.length > 0 && (
-          <div
-            style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}
-          >
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
             {diffs.map((d, i) => (
               <span
                 key={i}
@@ -685,14 +656,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
             background: '#14142a',
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 8,
-              marginBottom: 12,
-            }}
-          >
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
             {comp.propertyType && (
               <span
                 style={{
@@ -760,8 +724,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
                 📞 {comp.listingAgent.phone}
               </a>
             )}
-            {(comp.openHouseDate ||
-              (comp.openHouseDates && comp.openHouseDates.length > 0)) && (
+            {(comp.openHouseDate || (comp.openHouseDates && comp.openHouseDates.length > 0)) && (
               <span
                 style={{
                   background: '#1a2f1a',
@@ -775,14 +738,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
               </span>
             )}
           </div>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 6,
-              marginBottom: 10,
-            }}
-          >
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
             {points.map((pt, j) => (
               <span
                 key={j}
@@ -799,14 +755,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
               </span>
             ))}
           </div>
-          <p
-            style={{
-              margin: 0,
-              color: '#94a3b8',
-              fontSize: 13,
-              lineHeight: 1.6,
-            }}
-          >
+          <p style={{ margin: 0, color: '#94a3b8', fontSize: 13, lineHeight: 1.6 }}>
             {analysis}
           </p>
         </div>
@@ -816,7 +765,7 @@ function CompCard({ comp, subject, index, isSelected, onToggleSelect }) {
 }
 
 // ---------------------------------------------------------------------------
-// AUTH FORMS
+// AUTH SCREEN
 // ---------------------------------------------------------------------------
 function AuthScreen({ onLogin }) {
   const [mode, setMode] = useState('login');
@@ -842,11 +791,10 @@ function AuthScreen({ onLogin }) {
     setSuccess('');
     try {
       const pwHash = await hashPassword(password);
-      const { data: _existArr } = await sbSelect('users', 'user_id', {
+      const { data: existArr } = await sbSelect('users', 'user_id', {
         email: email.trim().toLowerCase(),
       });
-      const existing = _existArr && _existArr.length > 0 ? _existArr[0] : null;
-      if (existing) {
+      if (existArr && existArr.length > 0) {
         setError('An account with this email already exists.');
         setLoading(false);
         return;
@@ -891,8 +839,8 @@ function AuthScreen({ onLogin }) {
         return;
       }
       onLogin(data);
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      console.error(err);
       setError('Login failed. Please try again.');
     }
     setLoading(false);
@@ -932,9 +880,7 @@ function AuthScreen({ onLogin }) {
       }}
     >
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
-        <h1
-          style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#a5b4fc' }}
-        >
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#a5b4fc' }}>
           ShowNext
         </h1>
         <p style={{ margin: '6px 0 0', color: '#6366f1', fontSize: 13 }}>
@@ -964,11 +910,7 @@ function AuthScreen({ onLogin }) {
           {['login', 'register'].map((m) => (
             <button
               key={m}
-              onClick={() => {
-                setMode(m);
-                setError('');
-                setSuccess('');
-              }}
+              onClick={() => { setMode(m); setError(''); setSuccess(''); }}
               style={{
                 flex: 1,
                 padding: '8px',
@@ -1068,23 +1010,12 @@ function AuthScreen({ onLogin }) {
             }}
           >
             {loading
-              ? mode === 'login'
-                ? 'Signing in…'
-                : 'Creating account…'
-              : mode === 'login'
-              ? 'Sign In →'
-              : 'Create Free Account →'}
+              ? mode === 'login' ? 'Signing in…' : 'Creating account…'
+              : mode === 'login' ? 'Sign In →' : 'Create Free Account →'}
           </button>
         </form>
 
-        <p
-          style={{
-            textAlign: 'center',
-            marginTop: 16,
-            fontSize: 12,
-            color: '#4c4c72',
-          }}
-        >
+        <p style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: '#4c4c72' }}>
           Test limit: 20 searches · Track your comp searches · Free during beta
         </p>
       </div>
@@ -1100,23 +1031,17 @@ function Dashboard({ user, onBack }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    sbSelectOrdered(
-      'search_logs',
-      '*',
-      'user_id',
-      user.user_id,
-      'timestamp',
-      false,
-      50
-    ).then(({ data }) => {
-      setLogs(data || []);
-      setLoading(false);
-    });
+    sbSelectOrdered('search_logs', '*', 'user_id', user.user_id, 'timestamp', false, 50).then(
+      ({ data }) => {
+        setLogs(data || []);
+        setLoading(false);
+      }
+    );
   }, [user.user_id]);
 
-  const used = user.search_count,
-    limit = user.search_limit,
-    pct = Math.round((used / limit) * 100);
+  const used = user.search_count;
+  const limit = user.search_limit;
+  const pct = Math.round((used / limit) * 100);
 
   return (
     <div
@@ -1137,14 +1062,7 @@ function Dashboard({ user, onBack }) {
         }}
       >
         <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#a5b4fc',
-            }}
-          >
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#a5b4fc' }}>
             My Dashboard
           </h1>
           <p style={{ margin: '3px 0 0', color: '#c7d2fe', fontSize: 13 }}>
@@ -1225,21 +1143,12 @@ function Dashboard({ user, onBack }) {
           </p>
         </div>
 
-        <h2
-          style={{
-            margin: '0 0 14px',
-            fontSize: 17,
-            fontWeight: 700,
-            color: '#a5b4fc',
-          }}
-        >
+        <h2 style={{ margin: '0 0 14px', fontSize: 17, fontWeight: 700, color: '#a5b4fc' }}>
           Search History
         </h2>
         {loading && <p style={{ color: '#64748b', fontSize: 14 }}>Loading…</p>}
         {!loading && logs.length === 0 && (
-          <p style={{ color: '#64748b', fontSize: 14 }}>
-            No searches yet. Go find some comps!
-          </p>
+          <p style={{ color: '#64748b', fontSize: 14 }}>No searches yet. Go find some comps!</p>
         )}
         {logs.map((log, i) => (
           <div
@@ -1299,7 +1208,6 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [altLocation, setAltLocation] = useState('');
   const [radius, setRadius] = useState(DEFAULT_RADIUS);
-  const listingMode = 'sale'; // Rental mode removed — RentCast rental data incomplete
   const [subject, setSubject] = useState(null);
   const [comps, setComps] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -1309,12 +1217,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
 
   async function refreshUser(userId) {
-    const { data: userData } = await sbSelect(
-      'users',
-      '*',
-      { user_id: userId },
-      true
-    );
+    const { data: userData } = await sbSelect('users', '*', { user_id: userId }, true);
     if (userData) setUser(userData);
     return userData;
   }
@@ -1323,6 +1226,7 @@ export default function App() {
     setUser(userData);
     setView('search');
   }
+
   function handleLogout() {
     setUser(null);
     setView('search');
@@ -1340,9 +1244,7 @@ export default function App() {
     const freshUser = await refreshUser(user.user_id);
     if (freshUser.search_count >= freshUser.search_limit) {
       setError(
-        'Test limit reached. You have used your ' +
-          freshUser.search_limit +
-          ' searches.'
+        'Test limit reached. You have used your ' + freshUser.search_limit + ' searches.'
       );
       return;
     }
@@ -1362,7 +1264,6 @@ export default function App() {
       setLoadingMsg('Fetching property value…');
       let displayPrice, displayPriceLabel;
 
-      // Try actual listing price first, then AVM, then fallbacks
       const listingPrice = await fetchSubjectListingPrice(searchAddress);
       apiCallsUsed++;
       if (listingPrice) {
@@ -1382,7 +1283,7 @@ export default function App() {
           displayPriceLabel = 'Est. Value';
         }
       }
-      // Apply manual price override if set
+
       if (SUBJECT_PRICE_OVERRIDE) {
         displayPrice = SUBJECT_PRICE_OVERRIDE;
         displayPriceLabel = 'List Price';
@@ -1394,8 +1295,8 @@ export default function App() {
         _displayPriceLabel: displayPriceLabel,
       };
 
-      let searchLat = subjectProp.latitude,
-        searchLng = subjectProp.longitude;
+      let searchLat = subjectProp.latitude;
+      let searchLng = subjectProp.longitude;
       if (altLocation.trim()) {
         setLoadingMsg('Looking up search location…');
         const altProp = await fetchSubjectProperty(altLocation.trim());
@@ -1407,44 +1308,32 @@ export default function App() {
       setSubject(subjectProp);
       setLoadingMsg('Searching for similar active sale listings…');
       const listings = await fetchActiveListings(searchLat, searchLng, radius);
-      apiCallsUsed += 2;
+      apiCallsUsed += 3; // now correctly counting all 3 property type fetches
 
-      // Find subject in listings pool by coordinates to get real list price.
-      // Also do a direct address lookup without propertyType filter as backup,
-      // in case RentCast classifies the subject under a different property type.
+      // Try to find subject in the listings pool by coordinates
       let subjectFoundInListings = listings.find((p) => {
         if (!p.latitude || !p.longitude) return false;
-        const dist = haversine(
-          subjectProp.latitude,
-          subjectProp.longitude,
-          p.latitude,
-          p.longitude
-        );
-        return dist < 0.02;
+        return haversine(subjectProp.latitude, subjectProp.longitude, p.latitude, p.longitude) < 0.02;
       });
+
       if (!subjectFoundInListings) {
-        // Fallback: direct lookup without propertyType filter
+        // Fallback: direct address lookup without propertyType filter
         try {
           const fallbackRes = await fetch(
             `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(
               searchAddress
             )}&status=Active&limit=1`,
-            { headers: { 'X-Api-Key': RENTCAST_KEY } }
+            { headers: RENTCAST_HEADERS }
           );
           if (fallbackRes.ok) {
             const fallbackData = await fallbackRes.json();
-            if (
-              Array.isArray(fallbackData) &&
-              fallbackData.length > 0 &&
-              fallbackData[0].price
-            ) {
+            if (Array.isArray(fallbackData) && fallbackData.length > 0 && fallbackData[0].price) {
               subjectFoundInListings = fallbackData[0];
             }
           }
           apiCallsUsed++;
         } catch (_) {}
       }
-      
 
       const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
@@ -1467,6 +1356,7 @@ export default function App() {
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
     }
+
     setLoading(false);
     setLoadingMsg('');
   }
@@ -1478,12 +1368,9 @@ export default function App() {
       return n;
     });
   }
-  function selectAll() {
-    setSelected(new Set(comps.map((_, i) => i)));
-  }
-  function clearAll() {
-    setSelected(new Set());
-  }
+  function selectAll() { setSelected(new Set(comps.map((_, i) => i))); }
+  function clearAll() { setSelected(new Set()); }
+
   const selectedComps = useMemo(
     () => comps.filter((_, i) => selected.has(i)),
     [comps, selected]
@@ -1493,38 +1380,38 @@ export default function App() {
     if (!subject || selectedComps.length === 0) return '';
     const lines = selectedComps
       .map((c) => {
-        const addr = buildAddress(c),
-          price = fmt$(c.price || c.listPrice),
-          beds = c.bedrooms ?? '?',
-          baths = c.bathrooms ?? '?',
-          sqft = c.squareFootage ? fmtNum(c.squareFootage) : '?',
-          url = zillowUrl(c);
+        const addr = buildAddress(c);
+        const price = fmt$(c.price || c.listPrice);
+        const beds = c.bedrooms ?? '?';
+        const baths = c.bathrooms ?? '?';
+        const sqft = c.squareFootage ? fmtNum(c.squareFootage) : '?';
+        const url = zillowUrl(c);
         return `• ${addr} — ${price} | ${beds} bed / ${baths} bath | ${sqft} sqft\n  ${url}`;
       })
       .join('\n');
     return `Hi! Here are some similar homes for sale to ${query.trim()} that I thought you'd find interesting:\n\n${lines}\n\nWould you like to tour any of these? Let me know and I'll set it up!`;
   }
+
   function buildClientMessageHTML() {
     if (!subject || selectedComps.length === 0) return '';
     const items = selectedComps
       .map((c) => {
-        const addr = buildAddress(c),
-          price = fmt$(c.price || c.listPrice),
-          beds = c.bedrooms ?? '?',
-          baths = c.bathrooms ?? '?',
-          sqft = c.squareFootage ? fmtNum(c.squareFootage) : '?',
-          url = zillowUrl(c);
+        const addr = buildAddress(c);
+        const price = fmt$(c.price || c.listPrice);
+        const beds = c.bedrooms ?? '?';
+        const baths = c.bathrooms ?? '?';
+        const sqft = c.squareFootage ? fmtNum(c.squareFootage) : '?';
+        const url = zillowUrl(c);
         return `<li><a href="${url}">${addr}</a> — ${price} | ${beds} bed / ${baths} bath | ${sqft} sqft</li>`;
       })
       .join('');
-    return `<p>Hi! Here are some similar homes to <a href="${zillowUrl(
-      subject
-    )}">${query.trim()}</a> that I thought you'd find interesting:</p><ul>${items}</ul><p>Would you like to tour any of these? Let me know and I'll set it up!</p>`;
+    return `<p>Hi! Here are some similar homes to <a href="${zillowUrl(subject)}">${query.trim()}</a> that I thought you'd find interesting:</p><ul>${items}</ul><p>Would you like to tour any of these? Let me know and I'll set it up!</p>`;
   }
+
   function copyMessage(asHtml) {
     if (asHtml) {
-      const html = buildClientMessageHTML(),
-        text = buildClientMessageText();
+      const html = buildClientMessageHTML();
+      const text = buildClientMessageText();
       if (!html) return;
       try {
         const item = new ClipboardItem({
@@ -1555,7 +1442,6 @@ export default function App() {
   if (view === 'dashboard')
     return <Dashboard user={user} onBack={() => setView('search')} />;
 
-  const subjectAddress = subject ? buildAddress(subject) : '';
   const limitReached = user.search_count >= user.search_limit;
 
   return (
@@ -1580,14 +1466,7 @@ export default function App() {
         }}
       >
         <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 800,
-              color: '#a5b4fc',
-            }}
-          >
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#a5b4fc' }}>
             ShowNext
           </h1>
           <p style={{ margin: '2px 0 0', color: '#c7d2fe', fontSize: 12 }}>
@@ -1642,19 +1521,11 @@ export default function App() {
               textAlign: 'center',
             }}
           >
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 800,
-                color: '#fca5a5',
-                marginBottom: 4,
-              }}
-            >
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#fca5a5', marginBottom: 4 }}>
               🔒 Test limit reached
             </div>
             <p style={{ margin: 0, color: '#fca5a5', fontSize: 14 }}>
-              You have used your {user.search_limit} searches. Contact us to get
-              more access.
+              You have used your {user.search_limit} searches. Contact us to get more access.
             </p>
           </div>
         )}
@@ -1713,13 +1584,7 @@ export default function App() {
             }}
           >
             Search Comps in Different Location{' '}
-            <span
-              style={{
-                color: '#64748b',
-                fontWeight: 400,
-                textTransform: 'none',
-              }}
-            >
+            <span style={{ color: '#64748b', fontWeight: 400, textTransform: 'none' }}>
               (optional)
             </span>
           </label>
@@ -1768,8 +1633,7 @@ export default function App() {
                   style={{
                     padding: '7px 16px',
                     background: radius === r ? '#4f46e5' : '#2d2d44',
-                    border:
-                      radius === r ? '2px solid #818cf8' : '2px solid #4c4c72',
+                    border: radius === r ? '2px solid #818cf8' : '2px solid #4c4c72',
                     borderRadius: 8,
                     color: radius === r ? '#fff' : '#94a3b8',
                     fontSize: 13,
@@ -1836,14 +1700,7 @@ export default function App() {
                 marginBottom: 12,
               }}
             >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 17,
-                  fontWeight: 700,
-                  color: '#a5b4fc',
-                }}
-              >
+              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#a5b4fc' }}>
                 {comps.length} Similar Active Listings
               </h2>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -1880,7 +1737,6 @@ export default function App() {
             <p style={{ margin: '0 0 14px', color: '#4c4c72', fontSize: 12 }}>
               Tap a card to expand details · Tap address to view listing
             </p>
-            {/* Subject property as highlighted card - always first, not selectable */}
             {subject && <SubjectCard subject={subject} />}
             {comps.map((comp, i) => (
               <CompCard
@@ -1896,18 +1752,9 @@ export default function App() {
         )}
 
         {!subject && !loading && (
-          <div
-            style={{
-              marginTop: 32,
-              textAlign: 'center',
-              color: '#4c4c72',
-              fontSize: 13,
-            }}
-          >
+          <div style={{ marginTop: 32, textAlign: 'center', color: '#4c4c72', fontSize: 13 }}>
             <p>Enter an address to find similar active listings</p>
-            <p style={{ marginTop: 4 }}>
-              Powered by Rentcast · Data updates daily
-            </p>
+            <p style={{ marginTop: 4 }}>Powered by Rentcast · Data updates daily</p>
           </div>
         )}
         <div style={{ height: 120 }} />
