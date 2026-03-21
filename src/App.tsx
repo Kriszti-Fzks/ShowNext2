@@ -267,8 +267,9 @@ const RENTCAST_HEADERS = { 'X-Api-Key': RENTCAST_KEY };
 
 async function fetchSubjectProperty(address) {
   // First try listings API — gets active listing data including price
-  const listingRes = await fetch(
-    `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(address)}&status=Active&limit=1`,
+  const cleanedAddress = address.replace(/#/g, '').replace(/\s+/g, ' ').trim();
+const listingRes = await fetch(
+    `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(cleanedAddress)}&status=Active&limit=1`,
     { headers: RENTCAST_HEADERS }
   );
   if (listingRes.ok) {
@@ -301,7 +302,18 @@ async function fetchSubjectProperty(address) {
 
 
 
-
+async function geocodeLocation(address) {
+  const cleanAddress = address.trim().replace(/,?\s*CA$/i, '').trim();
+  const res = await fetch(
+    `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cleanAddress)}&state=CA&limit=1`,
+    { headers: RENTCAST_HEADERS }
+  );
+  const data = await res.json();
+  if (res.ok && Array.isArray(data) && data.length > 0 && data[0].latitude) {
+    return { latitude: data[0].latitude, longitude: data[0].longitude };
+  }
+  throw new Error('Location not found. Try a city name, e.g. "Irvine"');
+}
 async function fetchActiveListings(lat, lng, radius) {
   const base = `https://api.rentcast.io/v1/listings/sale?latitude=${lat}&longitude=${lng}&radius=${radius}&status=Active&limit=500`;
 
@@ -333,7 +345,9 @@ function findSimilarHomes(subject, listings, radius, centerLat, centerLng) {
   centerLat = centerLat ?? subject.latitude;
   centerLng = centerLng ?? subject.longitude;
   const usingAltLocation = centerLat !== subject.latitude || centerLng !== subject.longitude;
-  const subjectCity = (subject.city || '').toLowerCase();
+  const subjectCity = (centerLat !== subject.latitude || centerLng !== subject.longitude)
+  ? null
+  : (subject.city || '').toLowerCase();
 
   const sameCityResults = [];
   const otherResults = [];
@@ -348,7 +362,7 @@ function findSimilarHomes(subject, listings, radius, centerLat, centerLng) {
     const score = scoreComp(subject, comp, distToSubject, radius);
     if (score === null) continue;
     const compCity = (comp.city || '').toLowerCase();
-    if (compCity === subjectCity) {
+if (subjectCity === null || compCity === subjectCity) {
       sameCityResults.push({ ...comp, _dist: distToSubject, _score: score });
     } else {
       otherResults.push({ ...comp, _dist: distToSubject, _score: score });
@@ -1258,13 +1272,7 @@ export default function App() {
 
       let searchLat = subjectProp.latitude;
       let searchLng = subjectProp.longitude;
-      if (altLocation.trim()) {
-        setLoadingMsg('Looking up search location…');
-        const altProp = await fetchSubjectProperty(altLocation.trim());
-        apiCallsUsed++;
-        searchLat = altProp.latitude;
-        searchLng = altProp.longitude;
-      }
+      
 
       if (subjectProp._isActiveListing) {
         subjectProp = {
@@ -1273,11 +1281,18 @@ export default function App() {
           _displayPriceLabel: 'List Price',
         };
       } else {
-        subjectProp = {
-          ...subjectProp,
-          _displayPrice: subjectProp.lastSalePrice || null,
-          _displayPriceLabel: subjectProp.lastSalePrice ? 'Last Sale · Listing may not be active' : 'Price unavailable · Listing may not be active',
-        };
+        try {
+          const avmRes = await fetch(
+            `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(searchAddress)}`,
+            { headers: RENTCAST_HEADERS }
+          );
+          if (avmRes.ok) {
+            const avmData = await avmRes.json();
+            if (avmData?.price) {
+              subjectProp = { ...subjectProp, _displayPrice: avmData.price, _displayPriceLabel: 'Est. Value' };
+            }
+          }
+        } catch (_) {}
       }
       setSubject(subjectProp);
       setLoadingMsg('Searching for similar active sale listings…');
@@ -1533,32 +1548,7 @@ export default function App() {
               letterSpacing: 1,
             }}
           >
-            Search Comps in Different Location{' '}
-            <span style={{ color: '#64748b', fontWeight: 400, textTransform: 'none' }}>
-              (optional)
-            </span>
-          </label>
-          <input
-            value={altLocation}
-            onChange={(e) => setAltLocation(e.target.value)}
-            placeholder="City, State  or  full address"
-            disabled={limitReached}
-            style={{
-              width: '100%',
-              padding: '11px 14px',
-              background: '#2d2d44',
-              border: '1.5px solid #4c4c72',
-              borderRadius: 10,
-              color: '#e2e8f0',
-              fontSize: 14,
-              outline: 'none',
-              boxSizing: 'border-box',
-            }}
-          />
-          <p style={{ margin: '5px 0 0', color: '#64748b', fontSize: 11 }}>
-            Leave blank to search near the subject property
-          </p>
-
+             </label>
           <div style={{ marginTop: 14 }}>
             <label
               style={{
