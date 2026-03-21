@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-const RENTCAST_KEY = '3e3426c07ce44160b258e3862f8fcdd7';
+const RENTCAST_KEY = 'cb15a8f37df94aab92c5107fd0a5f395';
 
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
