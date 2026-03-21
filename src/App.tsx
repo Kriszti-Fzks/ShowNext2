@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-const RENTCAST_KEY = 'cb15a8f37df94aab92c5107fd0a5f395';
+const RENTCAST_KEY = '3e3426c07ce44160b258e3862f8fcdd7';
 
 const SUPABASE_URL = 'https://iuuhvostbnybioegwmvl.supabase.co';
 const SUPABASE_ANON_KEY =
@@ -149,11 +149,7 @@ function buildAddress(prop) {
 // ---------------------------------------------------------------------------
 function scoreComp(subject, comp, distMiles, maxRadius) {
   let d = 0;
-  const bedDiff = Math.abs((comp.bedrooms || 0) - (subject.bedrooms || 0));
-  if (bedDiff > 2) return null;
-  if (bedDiff === 1) d += 15;
-  else if (bedDiff === 2) d += 28;
-
+  if ((comp.bedrooms || 0) !== (subject.bedrooms || 0)) return null;
   const sp = subject._displayPrice;
   const cp = comp.price || comp.listPrice;
   if (sp && cp) d += Math.min(30, (Math.abs(cp - sp) / sp) * 60);
@@ -270,6 +266,18 @@ const DEFAULT_RADIUS = 10;
 const RENTCAST_HEADERS = { 'X-Api-Key': RENTCAST_KEY };
 
 async function fetchSubjectProperty(address) {
+  // First try listings API — gets active listing data including price
+  const listingRes = await fetch(
+    `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(address)}&status=Active&limit=1`,
+    { headers: RENTCAST_HEADERS }
+  );
+  if (listingRes.ok) {
+    const listingData = await listingRes.json();
+    if (Array.isArray(listingData) && listingData.length > 0) {
+      return { ...listingData[0], _isActiveListing: true };
+    }
+  }
+  // Fallback: properties API for coordinates and details
   const res = await fetch(
     `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(address)}&limit=1`,
     { headers: RENTCAST_HEADERS }
@@ -278,8 +286,7 @@ async function fetchSubjectProperty(address) {
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) return data[0];
   }
-
-  // Fallback: search by city name
+  // Last fallback: city search for coordinates
   const cleanCity = address.trim().replace(/,?\s*CA$/i, '').trim();
   const cityRes = await fetch(
     `https://api.rentcast.io/v1/listings/sale?city=${encodeURIComponent(cleanCity)}&state=CA&limit=1`,
@@ -289,10 +296,8 @@ async function fetchSubjectProperty(address) {
   if (cityRes.ok && Array.isArray(cityData) && cityData.length > 0 && cityData[0].latitude) {
     return { latitude: cityData[0].latitude, longitude: cityData[0].longitude };
   }
-
   throw new Error('Location not found. Try typing just the city name, e.g. "Carlsbad"');
 }
-
 
 
 
@@ -1261,40 +1266,10 @@ export default function App() {
         searchLng = altProp.longitude;
       }
 
-      setSubject(subjectProp);
-      setLoadingMsg('Searching for similar active sale listings…');
-      const listings = await fetchActiveListings(searchLat, searchLng, radius);
-      apiCallsUsed += 3; // now correctly counting all 3 property type fetches
-
-      // Try to find subject in the listings pool by coordinates
-      let subjectFoundInListings = listings.find((p) =>
-  (p.addressLine1 || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 
-  (subjectProp.addressLine1 || '').toLowerCase().replace(/[^a-z0-9]/g, '') &&
-  p.zipCode === subjectProp.zipCode
-);
-
-      if (!subjectFoundInListings) {
-        // Fallback: direct address lookup without propertyType filter
-        try {
-          const fallbackRes = await fetch(
-            `https://api.rentcast.io/v1/listings/sale?address=${encodeURIComponent(
-              searchAddress
-            )}&status=Active&limit=1`,
-            { headers: RENTCAST_HEADERS }
-          );
-          if (fallbackRes.ok) {
-            const fallbackData = await fallbackRes.json();
-            if (Array.isArray(fallbackData) && fallbackData.length > 0 && fallbackData[0].price) {
-              subjectFoundInListings = fallbackData[0];
-            }
-          }
-          apiCallsUsed++;
-        } catch (_) {}
-      }
-      if (subjectFoundInListings) {
+      if (subjectProp._isActiveListing) {
         subjectProp = {
           ...subjectProp,
-          _displayPrice: subjectFoundInListings.price || subjectFoundInListings.listPrice,
+          _displayPrice: subjectProp.price || subjectProp.listPrice,
           _displayPriceLabel: 'List Price',
         };
       } else {
@@ -1305,6 +1280,11 @@ export default function App() {
         };
       }
       setSubject(subjectProp);
+      setLoadingMsg('Searching for similar active sale listings…');
+      const listings = await fetchActiveListings(searchLat, searchLng, radius);
+      apiCallsUsed += 3; // now correctly counting all 3 property type fetches
+
+    
       const ranked = findSimilarHomes(subjectProp, listings, radius, searchLat, searchLng);
       setComps(ranked);
 
